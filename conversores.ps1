@@ -1,4 +1,4 @@
-﻿function Buscar-ArchivoLocal {
+function Buscar-ArchivoLocal {
     param([string]$InputFile)
     $coincidencias = @()
 
@@ -66,7 +66,7 @@ function 2md {
     if (-not $OutputFile) {
         $OutputFile = [System.IO.Path]::ChangeExtension($resolved, ".md")
     }
-    uv run --with "markitdown[all],mammoth,python-docx,python-pptx,openpyxl,beautifulsoup4,pymupdf,pytesseract,pillow,extract-msg" "$env:USERPROFILE\pdf2md.py" "$resolved" "$OutputFile"
+    uv run --with "markitdown,mammoth,python-docx,python-pptx,openpyxl,beautifulsoup4,pymupdf,pytesseract,pillow,extract-msg" "$env:USERPROFILE\pdf2md.py" "$resolved" "$OutputFile"
 }
 
 Set-Alias -Name convertirmd -Value 2md
@@ -232,7 +232,17 @@ function 2pdf {
             Write-Host "Convertido con éxito en: $OutputFile" -ForegroundColor Green
         }
     } else {
-        pandoc "$resolved" --pdf-engine="C:\Program Files\wkhtmltopdf\bin\wkhtmltopdf.exe" -o "$OutputFile"
+        $wkPath = @(
+            "C:\Program Files\wkhtmltopdf\bin\wkhtmltopdf.exe",
+            "C:\Program Files (x86)\wkhtmltopdf\bin\wkhtmltopdf.exe",
+            "$env:LOCALAPPDATA\Programs\wkhtmltopdf\bin\wkhtmltopdf.exe"
+        ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+        if ($wkPath) {
+            pandoc "$resolved" --pdf-engine="$wkPath" -o "$OutputFile"
+        } else {
+            pandoc "$resolved" --pdf-engine="wkhtmltopdf" -o "$OutputFile"
+        }
         if ($LASTEXITCODE -eq 0 -and (Test-Path $OutputFile)) {
             Write-Host "Convertido con éxito en: $OutputFile" -ForegroundColor Green
         }

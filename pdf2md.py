@@ -1,15 +1,24 @@
-﻿import sys
+import sys
 import os
+import re
 import zipfile
+import tempfile
 from pathlib import Path
 from PIL import Image
 import pytesseract
-import fitz  # PyMuPDF
+import pymupdf
 from markitdown import MarkItDown
 
-tesseract_default = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-if os.path.exists(tesseract_default):
-    pytesseract.pytesseract.tesseract_cmd = tesseract_default
+# Buscar tesseract.exe en rutas habituales si no está en el PATH de la sesión actual
+tesseract_candidates = [
+    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+    os.path.join(os.environ.get("LOCALAPPDATA", ""), r"Programs\Tesseract-OCR\tesseract.exe"),
+]
+for cand in tesseract_candidates:
+    if os.path.exists(cand):
+        pytesseract.pytesseract.tesseract_cmd = cand
+        break
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".webp"}
 
@@ -21,17 +30,31 @@ CODE_LANGS = {
     ".bat": "bat", ".properties": "properties", ".ini": "ini", ".gradle": "groovy"
 }
 
+def limpiar_ruido_ocr(texto: str) -> str:
+    lineas_limpias = []
+    for linea in texto.splitlines():
+        s = linea.strip()
+        # Filtra líneas cortas de símbolos/ruido generadas por iconos o avatares
+        if s and len(s) <= 8 and not re.search(r'[a-zA-ZáéíóúÁÉÍÓÚñÑ0-9]{2,}', s):
+            continue
+        lineas_limpias.append(linea)
+    resultado = "\n".join(lineas_limpias)
+    return re.sub(r'\n{3,}', '\n\n', resultado).strip()
+
 def ocr_image(img: Image.Image) -> str:
     try:
-        return pytesseract.image_to_string(img, lang="spa+eng").strip()
+        langs = pytesseract.get_languages(config="")
+        idioma = "spa+eng" if "spa" in langs else "eng"
+        raw = pytesseract.image_to_string(img, lang=idioma)
     except pytesseract.TesseractError:
-        return pytesseract.image_to_string(img).strip()
+        raw = pytesseract.image_to_string(img)
+    return limpiar_ruido_ocr(raw)
 
 def ocr_pdf(pdf_path: Path) -> str:
-    doc = fitz.open(str(pdf_path))
+    doc = pymupdf.open(str(pdf_path))
     paginas = []
     for i, page in enumerate(doc, start=1):
-        pix = page.get_pixmap(dpi=200)
+        pix = page.get_pixmap(dpi=250)
         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
         texto_pag = ocr_image(img)
         if texto_pag:
@@ -76,7 +99,6 @@ def main():
     try:
         # Soporte para archivos .zip con múltiples ejercicios/clases dentro
         if input_path.suffix.lower() == ".zip":
-            import tempfile
             partes = []
             with tempfile.TemporaryDirectory() as tmpdir:
                 with zipfile.ZipFile(input_path, 'r') as zf:
