@@ -1,129 +1,125 @@
-import sys
 import os
 import re
+import sys
 import zipfile
 import tempfile
 from pathlib import Path
-from PIL import Image
+
+os.environ["PYTHONWARNINGS"] = "ignore"
+
+import pymupdf  # PyMuPDF
 import pytesseract
-import pymupdf
+from PIL import Image
 from markitdown import MarkItDown
 
-# Buscar tesseract.exe en rutas habituales si no está en el PATH de la sesión actual
-tesseract_candidates = [
-    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-    os.path.join(os.environ.get("LOCALAPPDATA", ""), r"Programs\Tesseract-OCR\tesseract.exe"),
-]
-for cand in tesseract_candidates:
-    if os.path.exists(cand):
-        pytesseract.pytesseract.tesseract_cmd = cand
-        break
 
-IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".webp"}
+def configurar_tesseract() -> bool:
+    posibles = [
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), r"Programs\Tesseract-OCR\tesseract.exe"),
+    ]
+    for ruta in posibles:
+        if ruta and os.path.isfile(ruta):
+            pytesseract.pytesseract.tesseract_cmd = ruta
+            return True
+    return False
 
-CODE_LANGS = {
-    ".java": "java", ".py": "python", ".sql": "sql", ".xml": "xml",
-    ".json": "json", ".yaml": "yaml", ".yml": "yaml", ".js": "javascript",
-    ".ts": "typescript", ".html": "html", ".css": "css", ".cs": "csharp",
-    ".cpp": "cpp", ".c": "c", ".h": "c", ".sh": "bash", ".ps1": "powershell",
-    ".bat": "bat", ".properties": "properties", ".ini": "ini", ".gradle": "groovy"
-}
 
 def limpiar_ruido_ocr(texto: str) -> str:
     lineas_limpias = []
     for linea in texto.splitlines():
         s = linea.strip()
-        # Filtra líneas cortas de símbolos/ruido generadas por iconos o avatares
-        if s and len(s) <= 8 and not re.search(r'[a-zA-ZáéíóúÁÉÍÓÚñÑ0-9]{2,}', s):
+        if not s:
+            lineas_limpias.append("")
+            continue
+        if len(s) <= 3 and not re.search(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9]", s):
             continue
         lineas_limpias.append(linea)
     resultado = "\n".join(lineas_limpias)
-    return re.sub(r'\n{3,}', '\n\n', resultado).strip()
+    return re.sub(r"\n{3,}", "\n\n", resultado).strip()
 
-def ocr_image(img: Image.Image) -> str:
-    try:
-        langs = pytesseract.get_languages(config="")
-        idioma = "spa+eng" if "spa" in langs else "eng"
-        raw = pytesseract.image_to_string(img, lang=idioma)
-    except pytesseract.TesseractError:
-        raw = pytesseract.image_to_string(img)
-    return limpiar_ruido_ocr(raw)
 
-def ocr_pdf(pdf_path: Path) -> str:
-    doc = pymupdf.open(str(pdf_path))
-    paginas = []
-    for i, page in enumerate(doc, start=1):
-        pix = page.get_pixmap(dpi=250)
-        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        texto_pag = ocr_image(img)
-        if texto_pag:
-            paginas.append(f"## Página {i}\n\n{texto_pag}")
-    return "\n\n---\n\n".join(paginas)
+def convertir_pdf_a_md(ruta_pdf: Path) -> str:
+    tiene_ocr = configurar_tesseract()
+    doc = pymupdf.open(str(ruta_pdf))
+    partes = [f"# {ruta_pdf.stem}\n"]
 
-def convert_single_file(file_path: Path, md_converter: MarkItDown) -> str:
-    ext = file_path.suffix.lower()
+    for num_pag, pagina in enumerate(doc, start=1):
+        texto = pagina.get_text("text").strip()
 
-    # 1. Archivos de código fuente o configuración
-    if ext in CODE_LANGS:
-        contenido = file_path.read_text(encoding="utf-8", errors="replace").strip()
-        lang = CODE_LANGS[ext]
-        return f"### Archivo: `{file_path.name}`\n\n```{lang}\n{contenido}\n```"
+        if len(texto) < 30 and len(pagina.get_images()) > 0 and tiene_ocr:
+            try:
+                pix = pagina.get_pixmap(dpi=250)
+                modo = "RGBA" if pix.alpha else "RGB"
+                img = Image.frombytes(modo, [pix.width, pix.height], pix.samples)
+                texto_ocr = pytesseract.image_to_string(img, lang="spa+eng")
+                texto = limpiar_ruido_ocr(texto_ocr)
+            except Exception as e:
+                texto = f"> *[Aviso OCR en página {num_pag}: {e}]*"
 
-    # 2. Imágenes sueltas
-    if ext in IMAGE_EXTS:
-        img = Image.open(file_path)
-        return ocr_image(img)
+        if texto:
+            partes.append(f"## Página {num_pag}\n\n{texto}")
 
-    # 3. PDFs (con respaldo automático de OCR si viene como imagen)
+    doc.close()
+    return "\n\n---\n\n".join(partes).strip() + "\n"
+
+
+def convertir_archivo(ruta: Path, md_engine: MarkItDown) -> str:
+    ext = ruta.suffix.lower()
+
     if ext == ".pdf":
-        result = md_converter.convert(str(file_path))
-        texto = (result.text_content or "").strip()
-        if len(texto) < 50:  # PDF escaneado o basado en imágenes
-            texto = ocr_pdf(file_path)
-        return texto
+        return convertir_pdf_a_md(ruta)
 
-    # 4. Resto de formatos (Office, CSV, EPUB, MSG, etc.)
-    result = md_converter.convert(str(file_path))
-    return (result.text_content or "").strip()
+    if ext == ".zip":
+        secciones = [f"# Archivo ZIP: {ruta.name}\n"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with zipfile.ZipFile(ruta, "r") as zf:
+                zf.extractall(tmpdir)
+            for sub in sorted(Path(tmpdir).rglob("*")):
+                if sub.is_file() and not sub.name.startswith("."):
+                    rel = sub.relative_to(tmpdir)
+                    try:
+                        contenido_sub = convertir_archivo(sub, md_engine)
+                        secciones.append(f"## {rel}\n\n{contenido_sub}")
+                    except Exception as e:
+                        secciones.append(f"## {rel}\n\n> *[No se pudo convertir: {e}]*")
+        return "\n\n".join(secciones)
+
+    extensiones_codigo = {
+        ".java": "java", ".py": "python", ".ps1": "powershell", ".js": "javascript",
+        ".ts": "typescript", ".html": "html", ".css": "css", ".xml": "xml",
+        ".json": "json", ".sql": "sql", ".c": "c", ".cpp": "cpp", ".cs": "csharp",
+        ".sh": "bash", ".bat": "bat", ".yml": "yaml", ".yaml": "yaml", ".md": "markdown",
+        ".txt": ""
+    }
+    if ext in extensiones_codigo:
+        raw = ruta.read_text(encoding="utf-8", errors="replace")
+        lang = extensiones_codigo[ext]
+        if ext in {".md", ".txt"}:
+            return raw
+        return f"### `{ruta.name}`\n\n```{lang}\n{raw}\n```\n"
+
+    res = md_engine.convert(str(ruta))
+    return (res.text_content or "").strip() + "\n"
+
 
 def main():
     if len(sys.argv) < 3:
-        print("Uso: pdf2md.py <entrada> <salida>")
+        print("Uso: python pdf2md.py <archivo_entrada> <archivo_salida.md>", file=sys.stderr)
         sys.exit(1)
 
-    input_path = Path(sys.argv[1])
-    output_path = Path(sys.argv[2])
-    md_converter = MarkItDown()
+    ruta_entrada = Path(sys.argv[1]).resolve()
+    ruta_salida = Path(sys.argv[2]).resolve()
 
-    try:
-        # Soporte para archivos .zip con múltiples ejercicios/clases dentro
-        if input_path.suffix.lower() == ".zip":
-            partes = []
-            with tempfile.TemporaryDirectory() as tmpdir:
-                with zipfile.ZipFile(input_path, 'r') as zf:
-                    zf.extractall(tmpdir)
-                for f in sorted(Path(tmpdir).rglob("*")):
-                    if f.is_file() and not f.name.startswith("."):
-                        try:
-                            res = convert_single_file(f, md_converter)
-                            if res:
-                                partes.append(res)
-                        except Exception:
-                            pass
-            final_text = "\n\n---\n\n".join(partes)
-        else:
-            final_text = convert_single_file(input_path, md_converter)
-
-        if not final_text.strip():
-            print(f"Aviso: No se pudo extraer texto de '{input_path.name}'.")
-        else:
-            output_path.write_text(final_text.strip() + "\n", encoding="utf-8")
-            print(f"Convertido con éxito en: {output_path}")
-
-    except Exception as e:
-        print(f"Error al procesar '{input_path.name}': {e}")
+    if not ruta_entrada.is_file():
+        print(f"Error: No existe '{ruta_entrada}'", file=sys.stderr)
         sys.exit(1)
+
+    md_engine = MarkItDown(enable_plugins=False)
+    contenido_md = convertir_archivo(ruta_entrada, md_engine)
+    ruta_salida.write_text(contenido_md, encoding="utf-8")
+
 
 if __name__ == "__main__":
     main()
