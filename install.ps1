@@ -13,7 +13,7 @@ function Mostrar-Progreso {
     Write-Host "[$Paso/$totalPasos] $Estado" -ForegroundColor Cyan
 }
 
-# 1. Comprobación de restricciones de PowerShell (ordenadores de instituto / GPO)
+# 1. Comprobacion de restricciones de PowerShell (ordenadores de instituto / GPO)
 Mostrar-Progreso -Paso 1 -Actividad "Instalando conversores-ps" -Estado "Comprobando politicas de ejecucion de PowerShell..."
 
 Get-ChildItem -Path $dirOrigen -File | ForEach-Object {
@@ -39,14 +39,14 @@ if (($gpoMachine -in @("Restricted", "AllSigned")) -or ($gpoUser -in @("Restrict
     }
 }
 
-# 2. Instalación de dependencias mediante winget (solo si faltan)
+# 2. Instalacion de dependencias mediante winget (solo si faltan)
 Mostrar-Progreso -Paso 2 -Actividad "Instalando conversores-ps" -Estado "Verificando dependencias (uv, Pandoc, Tesseract, wkhtmltopdf)..."
 
 $dependencias = @(
-    @{ Id = "astral-sh.uv";               Nombre = "uv (Python)";      Check = { Get-Command uv -ErrorAction SilentlyContinue } },
-    @{ Id = "JohnMacFarlane.Pandoc";      Nombre = "Pandoc";           Check = { (Get-Command pandoc -ErrorAction SilentlyContinue) -or (Test-Path "$env:LOCALAPPDATA\Pandoc\pandoc.exe") -or (Test-Path "C:\Program Files\Pandoc\pandoc.exe") } },
-    @{ Id = "UB-Mannheim.TesseractOCR";   Nombre = "Tesseract OCR";    Check = { (Get-Command tesseract -ErrorAction SilentlyContinue) -or (Test-Path "C:\Program Files\Tesseract-OCR\tesseract.exe") -or (Test-Path "$env:LOCALAPPDATA\Programs\Tesseract-OCR\tesseract.exe") } },
-    @{ Id = "wkhtmltopdf.wkhtmltox";      Nombre = "wkhtmltopdf";      Check = { (Get-Command wkhtmltopdf -ErrorAction SilentlyContinue) -or (Test-Path "C:\Program Files\wkhtmltopdf\bin\wkhtmltopdf.exe") } }
+    @{ Id = "astral-sh.uv";             Nombre = "uv (Python)";   Check = { $null -ne (Get-Command uv -ErrorAction SilentlyContinue) } },
+    @{ Id = "JohnMacFarlane.Pandoc";    Nombre = "Pandoc";        Check = { ($null -ne (Get-Command pandoc -ErrorAction SilentlyContinue)) -or (Test-Path "$env:LOCALAPPDATA\Pandoc\pandoc.exe") -or (Test-Path "C:\Program Files\Pandoc\pandoc.exe") } },
+    @{ Id = "UB-Mannheim.TesseractOCR"; Nombre = "Tesseract OCR"; Check = { ($null -ne (Get-Command tesseract -ErrorAction SilentlyContinue)) -or (Test-Path "C:\Program Files\Tesseract-OCR\tesseract.exe") -or (Test-Path "$env:LOCALAPPDATA\Programs\Tesseract-OCR\tesseract.exe") } },
+    @{ Id = "wkhtmltopdf.wkhtmltox";    Nombre = "wkhtmltopdf";   Check = { ($null -ne (Get-Command wkhtmltopdf -ErrorAction SilentlyContinue)) -or (Test-Path "C:\Program Files\wkhtmltopdf\bin\wkhtmltopdf.exe") } }
 )
 
 $tieneWinget = $null -ne (Get-Command winget -ErrorAction SilentlyContinue)
@@ -62,7 +62,7 @@ foreach ($dep in $dependencias) {
     }
 }
 
-# 3. Configuración del PATH del usuario
+# 3. Configuracion del PATH del usuario
 Mostrar-Progreso -Paso 3 -Actividad "Instalando conversores-ps" -Estado "Configurando variables de entorno PATH..."
 
 $rutasExtra = @(
@@ -77,7 +77,7 @@ $rutasExtra = @(
 
 $pathUsuario = [Environment]::GetEnvironmentVariable("Path", "User")
 if (-not $pathUsuario) { $pathUsuario = "" }
-$listaPath = $pathUsuario -split ";" | Where-Object { $_ -ne "" }
+$listaPath = @($pathUsuario -split ";" | Where-Object { $_ -ne "" })
 
 foreach ($ruta in $rutasExtra) {
     if ((Test-Path $ruta) -and ($listaPath -notcontains $ruta)) {
@@ -89,7 +89,7 @@ $nuevoPathUsuario = ($listaPath -join ";")
 [Environment]::SetEnvironmentVariable("Path", $nuevoPathUsuario, "User")
 $env:Path = "$nuevoPathUsuario;$env:Path"
 
-# 4. Idioma español para Tesseract OCR
+# 4. Idioma espanol para Tesseract OCR
 Mostrar-Progreso -Paso 4 -Actividad "Instalando conversores-ps" -Estado "Comprobando paquete OCR en espanol (spa.traineddata)..."
 
 $posiblesTessdata = @(
@@ -112,7 +112,7 @@ foreach ($dirTess in $posiblesTessdata) {
     }
 }
 
-# 5. Copia de scripts con codificación segura (UTF-8 con BOM para PowerShell 5.1)
+# 5. Copia de scripts con codificacion segura (UTF-8 con BOM para PowerShell 5.1)
 Mostrar-Progreso -Paso 5 -Actividad "Instalando conversores-ps" -Estado "Copiando conversores.ps1 y pdf2md.py a $env:USERPROFILE..."
 
 $origenPs1 = Join-Path $dirOrigen "conversores.ps1"
@@ -133,7 +133,7 @@ $contenidoPy = [System.IO.File]::ReadAllText($origenPy, [System.Text.Encoding]::
 Unblock-File -Path $destPs1 -ErrorAction SilentlyContinue
 Unblock-File -Path $destPy -ErrorAction SilentlyContinue
 
-# 6. Actualización selectiva del $PROFILE mediante AST (sin borrar otras funciones del usuario)
+# 6. Actualizacion selectiva del $PROFILE mediante AST (sin borrar otras funciones del usuario)
 Mostrar-Progreso -Paso 6 -Actividad "Instalando conversores-ps" -Estado "Configurando perfil de PowerShell ($PROFILE)..."
 
 $dirPerfil = Split-Path -Parent $PROFILE
@@ -156,6 +156,8 @@ if (Test-Path $PROFILE) {
     $ast = [System.Management.Automation.Language.Parser]::ParseInput($contenidoPerfil, [ref]$tokens, [ref]$erroresAst)
 
     $rangosEliminar = @()
+
+    # Eliminar definiciones de funciones previas de la suite
     $nodosFunc = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)
     foreach ($fn in $nodosFunc) {
         if ($funcionesSuite -contains $fn.Name) {
@@ -163,17 +165,41 @@ if (Test-Path $PROFILE) {
         }
     }
 
-    $rangosOrdenados = $rangosEliminar | Sort-Object Start -Descending
-    foreach ($r in $rangosOrdenados) {
-        $contenidoPerfil = $contenidoPerfil.Remove($r.Start, ($r.End - $r.Start))
+    # Eliminar bloques if completos que carguen conversores.ps1
+    $nodosIf = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst] }, $true)
+    foreach ($ifNode in $nodosIf) {
+        if ($ifNode.Extent.Text -match 'conversores\.ps1') {
+            $rangosEliminar += [PSCustomObject]@{ Start = $ifNode.Extent.StartOffset; End = $ifNode.Extent.EndOffset }
+        }
     }
 
-    $lineas = $contenidoPerfil -split "`r?`n" | Where-Object {
+    $rangosOrdenados = @($rangosEliminar | Sort-Object Start -Descending)
+    foreach ($r in $rangosOrdenados) {
+        if ($r.Start -ge 0 -and $r.End -le $contenidoPerfil.Length -and $r.End -gt $r.Start) {
+            $contenidoPerfil = $contenidoPerfil.Remove($r.Start, ($r.End - $r.Start))
+        }
+    }
+
+    # Limpiar lineas sueltas antiguas de carga o alias de la suite
+    $lineas = @($contenidoPerfil -split "`r?`n" | Where-Object {
         $_ -notmatch 'conversores\.ps1' -and
         $_ -notmatch 'Set-Alias\s+(convertirmd|pdf2md)\s+2md' -and
         $_ -notmatch '# --- Suite conversores-ps ---'
-    }
+    })
     $contenidoPerfil = ($lineas -join "`r`n").Trim()
+
+    # Reparar cualquier llave huerfana si hubiera quedado de una version anterior
+    for ($intento = 0; $intento -lt 10; $intento++) {
+        $tCheck = $null
+        $eCheck = $null
+        [System.Management.Automation.Language.Parser]::ParseInput($contenidoPerfil, [ref]$tCheck, [ref]$eCheck) | Out-Null
+        $llaveSobrante = $eCheck | Where-Object { $_.ErrorId -eq "UnexpectedToken" -and $_.Extent.Text -eq "}" } | Select-Object -First 1
+        if ($null -ne $llaveSobrante) {
+            $contenidoPerfil = $contenidoPerfil.Remove($llaveSobrante.Extent.StartOffset, ($llaveSobrante.Extent.EndOffset - $llaveSobrante.Extent.StartOffset)).Trim()
+        } else {
+            break
+        }
+    }
 }
 
 $bloqueCarga = @"

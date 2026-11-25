@@ -24,33 +24,33 @@ function Buscar-ArchivoLocal {
         "$env:USERPROFILE\OneDrive\Escritorio"
     ) | Where-Object { Test-Path $_ } | Select-Object -Unique
 
-    $coincidencias = @()
+    $encontradosTotal = @()
     foreach ($carpeta in $rutasBusqueda) {
-        $encontrados = Get-ChildItem -Path $carpeta -Filter $NombreOPath -File -Recurse -ErrorAction SilentlyContinue
-        if ($encontrados) {
-            $coincidencias += $encontrados
+        $encontrados = @(Get-ChildItem -Path $carpeta -Filter $NombreOPath -File -Recurse -ErrorAction SilentlyContinue)
+        if ($encontrados.Count -gt 0) {
+            $encontradosTotal += $encontrados
         }
     }
 
-    $coincidencias = $coincidencias | Select-Object -Property FullName -Unique
+    $coincidencias = @($encontradosTotal | ForEach-Object { $_.FullName } | Select-Object -Unique)
 
     if ($coincidencias.Count -eq 0) {
         throw "No se encontro el archivo '$NombreOPath' en la carpeta actual ni en Downloads/Documents/Desktop/OneDrive."
     }
 
     if ($coincidencias.Count -eq 1) {
-        Write-Host "Archivo encontrado: $($coincidencias[0].FullName)" -ForegroundColor Cyan
-        return $coincidencias[0].FullName
+        Write-Host "Archivo encontrado: $($coincidencias[0])" -ForegroundColor Cyan
+        return $coincidencias[0]
     }
 
     Write-Host "Se encontraron varias coincidencias para '$NombreOPath':" -ForegroundColor Yellow
     for ($i = 0; $i -lt $coincidencias.Count; $i++) {
-        Write-Host "  [$($i + 1)] $($coincidencias[$i].FullName)" -ForegroundColor White
+        Write-Host "  [$($i + 1)] $($coincidencias[$i])" -ForegroundColor White
     }
     $sel = Read-Host "Elige el numero del archivo (1-$($coincidencias.Count))"
     $idx = 0
     if ([int]::TryParse($sel, [ref]$idx) -and $idx -ge 1 -and $idx -le $coincidencias.Count) {
-        return $coincidencias[$idx - 1].FullName
+        return $coincidencias[$idx - 1]
     }
     throw "Seleccion no valida."
 }
@@ -122,6 +122,8 @@ function 2md {
         $rutaEntrada = Buscar-ArchivoLocal -NombreOPath $Archivo
         if (-not $Salida) {
             $Salida = [System.IO.Path]::ChangeExtension($rutaEntrada, ".md")
+        } else {
+            $Salida = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Salida)
         }
 
         $scriptPy = Join-Path $env:USERPROFILE "pdf2md.py"
@@ -194,16 +196,18 @@ function Preparar-PlantillaWord {
         }
     }
 
-    foreach ($shape in $DocWord.Shapes) {
-        if ($shape.TextFrame.HasText) {
-            foreach ($item in $reemplazos) {
-                foreach ($tag in $item.Tags) {
-                    $fS = $shape.TextFrame.TextRange.Find
-                    $fS.Execute($tag, $false, $false, $false, $false, $false, $true, 1, $false, $item.Valor, 2) | Out-Null
+    try {
+        foreach ($shape in $DocWord.Shapes) {
+            if ($shape.TextFrame.HasText) {
+                foreach ($item in $reemplazos) {
+                    foreach ($tag in $item.Tags) {
+                        $fS = $shape.TextFrame.TextRange.Find
+                        $fS.Execute($tag, $false, $false, $false, $false, $false, $true, 1, $false, $item.Valor, 2) | Out-Null
+                    }
                 }
             }
         }
-    }
+    } catch {}
 
     if ($SinTitulo) {
         for ($i = $DocWord.Paragraphs.Count; $i -ge 1; $i--) {
@@ -319,6 +323,8 @@ function 2docx {
         $rutaEntrada = Buscar-ArchivoLocal -NombreOPath $Archivo
         if (-not $Salida) {
             $Salida = [System.IO.Path]::ChangeExtension($rutaEntrada, ".docx")
+        } else {
+            $Salida = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Salida)
         }
 
         if ($Plantilla) {
@@ -369,6 +375,8 @@ function 2pdf {
         $rutaEntrada = Buscar-ArchivoLocal -NombreOPath $Archivo
         if (-not $Salida) {
             $Salida = [System.IO.Path]::ChangeExtension($rutaEntrada, ".pdf")
+        } else {
+            $Salida = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Salida)
         }
 
         if ($Plantilla) {
@@ -439,8 +447,11 @@ function 2code {
         $rutaEntrada = Buscar-ArchivoLocal -NombreOPath $Archivo
         if (-not $CarpetaDestino) {
             $CarpetaDestino = (Get-Location).Path
-        } elseif (-not (Test-Path $CarpetaDestino)) {
-            New-Item -ItemType Directory -Path $CarpetaDestino -Force | Out-Null
+        } else {
+            $CarpetaDestino = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($CarpetaDestino)
+            if (-not (Test-Path $CarpetaDestino)) {
+                New-Item -ItemType Directory -Path $CarpetaDestino -Force | Out-Null
+            }
         }
 
         $contenido = [System.IO.File]::ReadAllText($rutaEntrada, [System.Text.Encoding]::UTF8)
@@ -454,9 +465,9 @@ function 2code {
         }
 
         $patron = '(?ms)(?:^#{1,6}\s+`?([^\r\n`]+\.[a-zA-Z0-9]{1,8})`?\s*\r?\n+|^\*\*`?([^\r\n`]+\.[a-zA-Z0-9]{1,8})`?\*\*\s*\r?\n+)?```([a-zA-Z0-9_-]*)\r?\n(.*?)\r?\n```'
-        $matches = [regex]::Matches($contenido, $patron)
+        $coincidenciasRegex = @([regex]::Matches($contenido, $patron))
 
-        if ($matches.Count -eq 0) {
+        if ($coincidenciasRegex.Count -eq 0) {
             Write-Host "[AVISO] No se encontraron bloques de codigo ```...``` en '$rutaEntrada'." -ForegroundColor Yellow
             return
         }
@@ -464,13 +475,13 @@ function 2code {
         $utf8SinBom = New-Object System.Text.UTF8Encoding $false
         $contador = 0
 
-        foreach ($m in $matches) {
+        foreach ($m in $coincidenciasRegex) {
             $contador++
             $nombreHeader = if ($m.Groups[1].Success) { $m.Groups[1].Value.Trim() } elseif ($m.Groups[2].Success) { $m.Groups[2].Value.Trim() } else { "" }
             $lang = $m.Groups[3].Value.Trim().ToLower()
             $codigo = $m.Groups[4].Value
 
-            $lineas = $codigo -split "`r?`n"
+            $lineas = @($codigo -split "`r?`n")
             $nombrePrimeraLinea = ""
             if ($lineas.Count -gt 0 -and $lineas[0] -match '^\s*(?://|#|/\*|<!--)\s*([a-zA-Z0-9_./\\-]+\.[a-zA-Z0-9]{1,8})\s*(?:\*/|-->)?\s*$') {
                 $nombrePrimeraLinea = $Matches[1].Trim()
